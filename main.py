@@ -1,7 +1,3 @@
-# ✅ Aetherion Video Assembly Service with Supabase Upload (Python + FastAPI)
-
-# File: main.py
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
@@ -9,23 +5,28 @@ import requests
 import subprocess
 import tempfile
 from pathlib import Path
-from supabase import create_client, Client
 
 app = FastAPI()
 
-# 🔑 Replace these with your real Supabase project values
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://your-project.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "your-supabase-service-role-key")
+# -----------------------------
+# Environment variables
+# -----------------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BUCKET_NAME = "aetherion-media"
 OUTPUT_FOLDER = "video/assembled"
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
+# -----------------------------
+# Request Model
+# -----------------------------
 class AssembleRequest(BaseModel):
     frames_folder_url: str
     audio_file_url: str
     output_file_name: str
 
+# -----------------------------
+# Routes
+# -----------------------------
 @app.post("/assemble")
 async def assemble_video(req: AssembleRequest):
     try:
@@ -33,7 +34,7 @@ async def assemble_video(req: AssembleRequest):
             frames_dir = Path(temp_dir) / "frames"
             frames_dir.mkdir()
 
-            # For now, simulate 1 frame image (real use = download all frames later)
+            # Download example 1 frame (test mode)
             frame_path = frames_dir / "frame1.png"
             download_file(req.frames_folder_url, frame_path)
 
@@ -55,7 +56,7 @@ async def assemble_video(req: AssembleRequest):
 
             subprocess.run(ffmpeg_command, check=True)
 
-            # ✅ Upload video to Supabase
+            # Upload final video to Supabase
             upload_to_supabase(output_path, req.output_file_name)
 
             return {"status": "success", "video_file": req.output_file_name}
@@ -63,6 +64,9 @@ async def assemble_video(req: AssembleRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# -----------------------------
+# Utilities
+# -----------------------------
 def download_file(url, output_path):
     r = requests.get(url, stream=True)
     if r.status_code == 200:
@@ -73,31 +77,17 @@ def download_file(url, output_path):
         raise Exception(f"Download failed: {url}")
 
 def upload_to_supabase(file_path, file_name):
+    storage_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{OUTPUT_FOLDER}/{file_name}"
+
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "video/mp4"
+    }
+
     with open(file_path, "rb") as f:
-        data = f.read()
-        supabase.storage.from_(BUCKET_NAME).upload(
-            file=f"{OUTPUT_FOLDER}/{file_name}",
-            file_data=data,
-            file_options={"content-type": "video/mp4"}
-        )
+        file_data = f.read()
 
-# ------------------------
-# File: requirements.txt
-# ------------------------
+    response = requests.put(storage_url, headers=headers, data=file_data)
 
-# fastapi
-# uvicorn
-# requests
-# supabase
-
-# ------------------------
-# File: Procfile
-# ------------------------
-
-# web: uvicorn main:app --host=0.0.0.0 --port=${PORT:-5000}
-
-# ------------------------
-# File: runtime.txt
-# ------------------------
-
-# python-3.10
+    if response.status_code != 200 and response.status_code != 201:
+        raise Exception(f"Failed to upload to Supabase Storage: {response.status_code}, {response.text}")
